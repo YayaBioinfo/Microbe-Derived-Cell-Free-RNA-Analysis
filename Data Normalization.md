@@ -1,4 +1,4 @@
-## 🧬 Taxonomic Profiling and Normalization
+## 🧬 Data Normalization
 
 This section describes the workflow used to process **Kraken2 report files**, generate a species/genus-level count matrix for **Bacteria**, and perform normalization and batch correction using **edgeR (TMM)** and **RUVSeq (RUVg)**.
 
