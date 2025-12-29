@@ -1,0 +1,156 @@
+# ========================================
+# LOAD LIBRARIES
+# ========================================
+library(dplyr)
+library(readr)
+library(readxl)
+library(tidyr)
+library(networkD3)
+library(RColorBrewer)
+library(htmlwidgets)
+library(jsonlite)
+
+# ========================================
+# 1. Load Pearson correlation (long format)
+# ========================================
+corr_df <- read.csv("Pearson_Genus_vs_Phenotype_pval_final.csv")
+# Kolom wajib:
+# Genus | Phenotype | r | p_value | FDR
+
+# ========================================
+# 2. Load Z-score matrix & pivot to long
+# ========================================
+z_mat <- read.csv(
+  "Pearson_Genus_vs_Phenotype_zscore_matrix_filtered.csv",
+  row.names = 1,
+  check.names = FALSE
+)
+
+z_long <- z_mat %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Genus") %>%
+  pivot_longer(
+    cols = -Genus,
+    names_to = "Phenotype",
+    values_to = "Z"
+  )
+
+# ========================================
+# 3. Join Pearson + Z-score
+# ========================================
+corr_joined <- corr_df %>%
+  inner_join(z_long, by = c("Genus", "Phenotype"))
+
+# ========================================
+# 4. FILTER UTAMA (SESUAI PERMINTAAN)
+# ========================================
+corr_filtered <- corr_joined %>%
+  filter(
+    p_value < 0.05,
+    Z > 0
+  )
+
+# ---- CEK WAJIB (boleh dihapus setelah yakin) ----
+print(paste("Jumlah link lolos filter:", nrow(corr_filtered)))
+
+# ========================================
+# 5. Create links untuk Sankey
+# ========================================
+links <- corr_filtered %>%
+  select(Genus, Phenotype, r) %>%
+  rename(value = r)
+
+# ========================================
+# 6. Merge with Class2 phenotype
+# ========================================
+phen_class <- read_excel("differ_phenotype_class_20250818.xlsx") %>%
+  as.data.frame()
+
+phen_class$Phenotype <- trimws(phen_class$Phenotype)
+phen_class$Class2    <- trimws(phen_class$Class2)
+
+links <- merge(
+  links,
+  phen_class[, c("Phenotype", "Class2")],
+  by = "Phenotype",
+  all.x = TRUE
+)
+
+links$LinkGroup <- links$Genus
+
+# ========================================
+# 7. Nodes (Genus + Class2)
+# ========================================
+all_genus <- unique(links$Genus)
+all_class <- unique(links$Class2)
+
+nodes <- data.frame(
+  name = c(all_genus, all_class)
+)
+
+# ========================================
+# 8. Source & target (0-based index)
+# ========================================
+links$source <- match(links$Genus, nodes$name) - 1
+links$target <- match(links$Class2, nodes$name) - 1
+
+links <- links[!is.na(links$source) & !is.na(links$target), ]
+
+# ========================================
+# 9. Colour of node
+# ========================================
+genus_colors <- colorRampPalette(
+  brewer.pal(min(8, length(all_genus)), "Pastel1")
+)(length(all_genus))
+
+class_colors <- colorRampPalette(
+  brewer.pal(min(8, length(all_class)), "Pastel2")
+)(length(all_class))
+
+nodes$color <- c(genus_colors, class_colors)
+
+# ========================================
+# 10. Link colour follow sources
+# ========================================
+colorJS <- paste0(
+  'd3.scaleOrdinal().domain([',
+  paste0('"', nodes$name, '"', collapse = ','),
+  ']).range([',
+  paste0('"', nodes$color, '"', collapse = ','),
+  '])'
+)
+
+# ========================================
+# 11. Plot Sankey
+# ========================================
+source_nodes <- unique(links$source)
+
+sankey_plot <- sankeyNetwork(
+  Links = links,
+  Nodes = nodes,
+  Source = "source",
+  Target = "target",
+  Value = "value",
+  NodeID = "name",
+  LinkGroup = "LinkGroup",
+  fontSize = 12,
+  nodeWidth = 30,
+  colourScale = JS(colorJS)
+)
+
+# Italic only genus (source)
+sankey_plot <- onRender(
+  sankey_plot,
+  sprintf("
+  function(el, x) {
+    var sourceNodes = [%s];
+    d3.select(el)
+      .selectAll('.node text')
+      .style('font-style', function(d,i){
+        return sourceNodes.includes(i) ? 'italic' : 'normal';
+      });
+  }
+  ", paste(source_nodes, collapse = ","))
+)
+
+sankey_plot
