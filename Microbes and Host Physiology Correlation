@@ -1,0 +1,154 @@
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(readxl)
+library(pheatmap)
+library(reshape2)
+
+# ========================================
+# 1. Load abundance matrix & DA-significant genera
+# ========================================
+abundance <- read.csv("RUV_normalized_counts_global.csv",
+                      row.names = 1, check.names = FALSE)
+colnames(abundance) <- trimws(colnames(abundance))
+rownames(abundance) <- trimws(rownames(abundance))
+
+DA_Return_vs_Baseline_significant <- read.csv("DA_Return_vs_Baseline_significant.csv")
+DA_Return_vs_High_Altitude_significant <- read.csv("DA_Return_vs_High_Altitude_significant.csv")
+
+sig_genera <- unique(c(
+  trimws(DA_Return_vs_Baseline_significant$genus),
+  trimws(DA_Return_vs_High_Altitude_significant$genus)
+))
+
+rownames_lower <- tolower(rownames(abundance))
+sig_genera_lower <- tolower(sig_genera)
+sig_genera_match <- rownames(abundance)[rownames_lower %in% sig_genera_lower]
+
+tmm_sig <- abundance[sig_genera_match, , drop = FALSE]
+tmm_sig <- tmm_sig - min(tmm_sig) + 1e-6
+
+# ========================================
+# 2. Load phenotype metadata
+# ========================================
+phenos <- read_excel("rank_diff_phenotype_20250818.xlsx")
+phenos$cfRNA_Label <- trimws(phenos$cfRNA_Label)
+
+common_samples <- intersect(colnames(tmm_sig), phenos$cfRNA_Label)
+tmm_sig <- tmm_sig[, common_samples, drop = FALSE]
+phenos <- phenos[match(common_samples, phenos$cfRNA_Label), ]
+stopifnot(all(colnames(tmm_sig) == phenos$cfRNA_Label))
+
+# ========================================
+# 3. Pearson correlation + p-value 🔁
+# ========================================
+corr_list <- list()
+
+for (g in rownames(tmm_sig)) {
+  for (p in colnames(phenos)[4:ncol(phenos)]) {
+    tmp <- data.frame(
+      genus = as.numeric(tmm_sig[g, ]),
+      pheno = as.numeric(phenos[[p]])
+    )
+    tmp <- tmp[complete.cases(tmp), ]
+    
+    if (nrow(tmp) >= 3) {
+      test <- cor.test(tmp$genus, tmp$pheno, method = "pearson")
+      corr_list <- append(corr_list, list(
+        data.frame(
+          Genus = g,
+          Phenotype = p,
+          r = test$estimate,
+          p_value = test$p.value
+        )
+      ))
+    }
+  }
+}
+
+corr_df <- do.call(rbind, corr_list)
+corr_df$FDR <- p.adjust(corr_df$p_value, method = "BH")
+
+# ========================================
+# 4. Aggregate duplicate genus per phenotype
+# ========================================
+corr_df_agg <- corr_df %>%
+  group_by(Genus, Phenotype) %>%
+  summarise(
+    r = mean(r),
+    p_value = mean(p_value),
+    FDR = mean(FDR),
+    .groups = "drop"
+  )
+
+# ========================================
+# 5. Pivot ke matrix
+# ========================================
+corr_matrix <- acast(corr_df_agg, Genus ~ Phenotype,
+                     value.var = "r", fun.aggregate = mean)
+p_matrix <- acast(corr_df_agg, Genus ~ Phenotype,
+                  value.var = "p_value", fun.aggregate = mean)
+
+p_matrix[is.na(p_matrix)] <- 1
+corr_matrix[is.na(corr_matrix)] <- 0
+corr_matrix[p_matrix >= 0.05] <- 0
+
+# ========================================
+# 6. Z-score per phenotype (kolom)
+# ========================================
+z_corr_matrix <- apply(corr_matrix, 2, function(x) {
+  if (all(x == 0)) {
+    rep(0, length(x))
+  } else {
+    (x - mean(x)) / sd(x)
+  }
+})
+rownames(z_corr_matrix) <- rownames(corr_matrix)
+
+# ========================================
+# 7. Filter phenotype yang semua genus = 0
+# ========================================
+nonzero_cols <- apply(z_corr_matrix, 2, function(x) any(x != 0))
+z_corr_matrix_filtered <- z_corr_matrix[, nonzero_cols, drop = FALSE]
+
+# ========================================
+# 7B. Matrix bintang signifikansi
+# ========================================
+sig_matrix <- matrix("", nrow = nrow(p_matrix), ncol = ncol(p_matrix))
+rownames(sig_matrix) <- rownames(p_matrix)
+colnames(sig_matrix) <- colnames(p_matrix)
+
+sig_matrix[p_matrix < 0.05 & p_matrix >= 0.01] <- "*"
+sig_matrix[p_matrix < 0.01 & p_matrix >= 0.001] <- "**"
+sig_matrix[p_matrix < 0.001] <- "***"
+
+sig_matrix_filtered <- sig_matrix[, nonzero_cols, drop = FALSE]
+
+# ========================================
+# 8. Plot heatmap
+# ========================================
+pheno <- pheatmap(
+  z_corr_matrix_filtered,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  color = colorRampPalette(c("blue", "white", "red"))(50),
+  main = "",
+  fontsize_row = 8,
+  fontsize_col = 8,
+  display_numbers = sig_matrix_filtered,
+  number_color = "black",
+  fontsize_number = 10
+)
+
+
+
+# ========================================
+# 9. Save results
+# ========================================
+write.csv(corr_df_agg,
+          "Pearson_Genus_vs_Phenotype_pval_final.csv",
+          row.names = FALSE)
+write.csv(z_corr_matrix_filtered,
+          "Pearson_Genus_vs_Phenotype_zscore_matrix_filtered.csv")
