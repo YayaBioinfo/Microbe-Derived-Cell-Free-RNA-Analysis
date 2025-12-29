@@ -1,0 +1,206 @@
+# ===============================
+# 1️⃣ Load libraries
+# ===============================
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(forcats)
+
+# ===============================
+# 2️⃣ Load data
+# ===============================
+df <- read_tsv("bacteria_gen_per_module_named.tsv")
+metadata <- read_tsv("metadatamcfrna.txt", show_col_types = FALSE)
+metadata$cfRNA_Label <- trimws(metadata$cfRNA_Label)
+
+# ===============================
+# 3️⃣ Filter data & gabung metadata
+# ===============================
+df_clean <- df %>%
+  filter(!is.na(Module_Name), Module_Name != "-") %>%
+  left_join(metadata, by = c("sample_id" = "cfRNA_Label"))
+
+df_clean$timepoint <- factor(df_clean$timepoint, levels = paste0("T", 1:10))
+
+# ===============================
+# 4️⃣ Total gen per timepoint
+# ===============================
+total_genes <- df_clean %>%
+  group_by(timepoint) %>%
+  summarise(Total_Genes = sum(Count, na.rm = TRUE))
+
+# ===============================
+# 5️⃣ Top 50 modul
+# ===============================
+abundance_time <- df_clean %>%
+  group_by(timepoint, Module_Name) %>%
+  summarise(Total_Count = sum(Count, na.rm = TRUE), .groups = "drop")
+
+top_modules <- abundance_time %>%
+  group_by(Module_Name) %>%
+  summarise(Total = sum(Total_Count), .groups = "drop") %>%
+  arrange(desc(Total)) %>%
+  slice_head(n = 50)
+
+abundance_top50 <- abundance_time %>%
+  filter(Module_Name %in% top_modules$Module_Name)
+
+# ===============================
+# 6️⃣ Tambahkan kategori manual
+# ===============================
+category_map <- list(
+  "Energy metabolism" = c(
+    "Citrate cycle (TCA cycle, Krebs cycle)",
+    "Citrate cycle, second carbon oxidation, 2-oxoglutarate => oxaloacetate",
+    "Reductive citrate cycle (Arnon-Buchanan cycle)",
+    "Glycolysis (Embden-Meyerhof pathway), glucose => pyruvate",
+    "Gluconeogenesis, oxaloacetate => fructose-6P",
+    "Dicarboxylate-hydroxybutyrate cycle",
+    "Glycolysis, core module involving three-carbon compounds",
+    "NADH:quinone oxidoreductase, prokaryotes",
+    "F-type ATPase, prokaryotes and chloroplasts",
+    "Pyruvate oxidation, pyruvate => acetyl-CoA",
+    "Photorespiration",
+    "Reductive pentose phosphate cycle (Calvin cycle)",
+    "Incomplete reductive citrate cycle, acetyl-CoA => oxoglutarate",
+    "Semi-phosphorylative Entner-Doudoroff pathway, gluconate => glycerate-3P",
+    "Pentose phosphate pathway (Pentose phosphate cycle)",
+    "Glyoxylate cycle",
+    "Ketone body biosynthesis, acetyl-CoA => acetoacetate/3-hydroxybutyrate/acetone",
+    "Ethylmalonyl pathway"
+  ),
+  "Metabolism of cofactors and vitamins" = c(
+    "Heme biosynthesis, plants and bacteria, glutamate => heme",
+    "C5 isoprenoid biosynthesis, non-mevalonate pathway",
+    "Tetrahydrofolate biosynthesis, GTP => THF",
+    "Cobalamin biosynthesis, cobyrinate a,c-diamide => cobalamin",
+    "Pimeloyl-ACP biosynthesis, BioC-BioH pathway, malonyl-ACP => pimeloyl-ACP",
+    "Riboflavin biosynthesis, plants and bacteria, GTP => riboflavin/FMN/FAD",
+    "NAD biosynthesis, aspartate => quinolinate => NAD"
+  ),
+  "Carbohydrate metabolism" = c(
+    "3-Hydroxypropionate bi-cycle",
+    "Formaldehyde assimilation, serine pathway",
+    "D-galactonate degradation, De Ley-Doudoroff pathway, D-galactonate => glycerate-3P"
+  ),
+  "Amino acid & nucleotide metabolism" = c(
+    "Isoleucine biosynthesis, threonine => 2-oxobutanoate => isoleucine",
+    "Leucine degradation, leucine => acetoacetate + acetyl-CoA",
+    "Valine/isoleucine biosynthesis, pyruvate => valine / 2-oxobutanoate => isoleucine",
+    "Histidine biosynthesis, PRPP => histidine",
+    "Methionine biosynthesis, aspartate => homoserine => methionine",
+    "Lysine biosynthesis, succinyl-DAP pathway, aspartate => lysine",
+    "Lysine degradation, lysine => saccharopine => acetoacetyl-CoA",
+    "Tryptophan biosynthesis, chorismate => tryptophan",
+    "Shikimate pathway, phosphoenolpyruvate + erythrose-4P => chorismate",
+    "De novo purine biosynthesis, PRPP + glutamine => IMP",
+    "De novo pyrimidine biosynthesis, glutamine (+ PRPP) => UMP",
+    "Lysine biosynthesis, DAP aminotransferase pathway, aspartate => lysine",
+    "Lysine biosynthesis, acetyl-DAP pathway, aspartate => lysine",
+    "Threonine biosynthesis, aspartate => homoserine => threonine",
+    "Adenine ribonucleotide biosynthesis, IMP => ADP,ATP",
+    "Pyrrolnitrin biosynthesis, tryptophan => pyrrolnitrin",
+    "Rebeccamycin biosynthesis, tryptophan => rebeccamycin",
+    "Arginine biosynthesis, glutamate => acetylcitrulline => arginine",
+    "Deoxyribonucleotide biosynthesis, ADP/GDP/CDP/UDP => dATP/dGTP/dCTP/dUTP"
+  ),
+  "Drug resistance: antimicrobial" = c(
+    "Multidrug resistance, efflux pump MexAB-OprM"
+  ),
+  "Glycan biosynthesis and metabolism / Fatty acid metabolism" = c(
+    "Fatty acid biosynthesis, initiation",
+    "Fatty acid biosynthesis, elongation",
+    "dTDP-L-Rha biosynthesis, Glc-1P => dTDP-L-Rha"
+  ),
+  "Signal transduction" = c(
+    "Cytochrome bd ubiquinol oxidase",
+    "Cytochrome c oxidase, prokaryotes"
+  )
+)
+
+# Mapping kategori ke abundance_top50
+abundance_top50$Category <- sapply(abundance_top50$Module_Name, function(x) {
+  idx <- sapply(category_map, function(v) x %in% v)
+  cats <- names(category_map)[idx]
+  if(length(cats) == 0) return(NA)       # modul unknown dibuang
+  return(cats[1])                        # jika lebih dari 1, ambil yang pertama
+})
+
+# Buang modul tanpa kategori
+abundance_top50 <- abundance_top50 %>% filter(!is.na(Category))
+
+# Faktor urutan kategori
+cat_order <- c(
+  "Metabolism of cofactors and vitamins",
+  "Energy metabolism",
+  "Carbohydrate metabolism",
+  "Amino acid & nucleotide metabolism",
+  "Drug resistance: antimicrobial",
+  "Glycan biosynthesis and metabolism / Fatty acid metabolism",
+  "Signal transduction"
+)
+abundance_top50$Category <- factor(abundance_top50$Category, levels = cat_order)
+
+# ===============================
+# 7️⃣ Hitung fisher test per modul x timepoint
+# ===============================
+fisher_results <- abundance_top50 %>%
+  group_by(Module_Name, timepoint, Category) %>%
+  summarise(Module_Count = sum(Total_Count), .groups = "drop") %>%
+  rowwise() %>%
+  mutate(
+    p_value = fisher.test(
+      matrix(
+        c(
+          Module_Count,
+          total_genes$Total_Genes[total_genes$timepoint == timepoint] - Module_Count,
+          sum(Module_Count) - Module_Count,
+          sum(total_genes$Total_Genes) - sum(Module_Count) - (sum(Module_Count) - Module_Count)
+        ),
+        nrow = 2
+      )
+    )$p.value,
+    neglog10_p = -log10(p_value)
+  ) %>%
+  ungroup()
+
+# ===============================
+# 8️⃣ Urutkan modul sesuai kategori & total count
+# ===============================
+module_order <- fisher_results %>%
+  group_by(Category, Module_Name) %>%
+  summarise(Total = sum(Module_Count), .groups = "drop") %>%
+  arrange(factor(Category, levels = cat_order), desc(Total)) %>%
+  pull(Module_Name)
+
+fisher_results$Module_Name <- factor(fisher_results$Module_Name, levels = module_order)
+
+# ===============================
+# 9️⃣ Plot dot plot
+# ===============================
+p <- ggplot(fisher_results, aes(x = timepoint, y = Module_Name)) +
+  geom_point(aes(size = Module_Count, color = neglog10_p)) +
+  scale_color_gradient(low = "lightblue", high = "darkblue") +
+  theme_minimal(base_size = 12) +
+  theme(
+    text = element_text(family = "Arial", color = "black"),  # font Arial hitam
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(angle = 0, hjust = 1),
+    axis.text.x = element_text(angle = 0, hjust = 0.5, face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, size = 1)  # border panel
+  ) +
+  labs(
+    title = "",
+    subtitle = "",
+    x = "Timepoint",
+    size = "Gene Count",
+    color = "-log10(p-value)"
+  )
+
+
+
+
+# ===============================
+# 10️⃣ Tampilkan plot
+# ===============================
+print(p)
