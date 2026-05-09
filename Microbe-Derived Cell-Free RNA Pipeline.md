@@ -1,6 +1,6 @@
-# 🧬 cfRNA Metagenomics Pipeline
+# 🧬 Microbe-Derived cfRNA Pipeline
 
-A modular, parallel bioinformatics pipeline for processing cell-free RNA (cfRNA) sequencing data — from raw reads to functional annotation.
+A modular, parallel bioinformatics pipeline for processing cell-free RNA (cfRNA) sequencing data — from raw reads to functional annotation and machine learning-based classification.
 
 ---
 
@@ -32,6 +32,10 @@ Raw Reads (FASTQ)
       │
       ▼
 [8] Functional Annotation     EggNOG-mapper
+      │
+      ▼
+[9] ML Classification         Random Forest + PCA
+                              (misincorporation-based timepoint classification)
 ```
 
 ---
@@ -48,6 +52,8 @@ cfRNA-pipeline/
 │   ├── 05_kraken2_classify.sh        # Taxonomic classification
 │   ├── 06_assembly_annotation.sh     # MEGAHIT assembly + Prodigal gene prediction
 │   └── 07_eggnog.sh                  # Functional annotation (EggNOG-mapper)
+├── analysis/
+│   └── misincorporation_ml_classification.py   # ML-based timepoint classification
 ├── README.md
 └── manifest.tsv                      # Sample manifest (see format below)
 ```
@@ -66,6 +72,11 @@ cfRNA-pipeline/
 | [EggNOG-mapper](https://github.com/eggnogdb/eggnog-mapper) | ≥2.1 | Functional annotation |
 | [GNU Parallel](https://www.gnu.org/software/parallel/) | any | Parallel job execution |
 | [jq](https://stedolan.github.io/jq/) | any | JSON parsing (fastp summary) |
+| [scikit-learn](https://scikit-learn.org/) | ≥1.0 | ML classification (Random Forest, PCA) |
+| [pandas](https://pandas.pydata.org/) | ≥1.3 | Data manipulation |
+| [numpy](https://numpy.org/) | ≥1.21 | Numerical computing |
+| [scipy](https://scipy.org/) | ≥1.7 | Statistical testing (ANOVA) |
+| [matplotlib](https://matplotlib.org/) / [seaborn](https://seaborn.pydata.org/) | any | Visualization |
 
 ---
 
@@ -191,6 +202,34 @@ bash scripts/07_eggnog.sh
 
 ---
 
+### Step 8 — ML Classification (Misincorporation)
+
+```bash
+python analysis/misincorporation_ml_classification.py
+```
+
+- Input: `site_sample_base_counts.csv`, `metadatamcfrna.txt`
+- Computes misincorporation ratio per site per sample
+- Filters sites by depth (>5) and average misincorporation (>0.10)
+- Runs ANOVA per site across timepoints
+- Trains **Random Forest classifier** to predict timepoint from misincorporation profiles
+- Evaluates with **5-fold cross-validation** (robust for small sample sizes)
+- Outputs feature importance ranking and PCA visualization
+
+Key outputs:
+
+| File | Description |
+|------|-------------|
+| `misincorp_filtered_matrix.csv` | Filtered misincorporation matrix |
+| `differential_methylation_ANOVA_timepoint.csv` | ANOVA p-values per site |
+| `ml_cv_results.csv` | Cross-validation accuracy per fold |
+| `ml_feature_importance.csv` | Site importance ranking |
+| `ml_feature_importance.png` | Top 20 sites bar plot |
+| `ml_pca_plot.png` | PCA of sample misincorporation profiles |
+| `ml_confusion_matrix.png` | Confusion matrix (if samples ≥ 10) |
+
+---
+
 ## ⚡ Parallelization
 
 All scripts support parallel execution via [GNU Parallel](https://www.gnu.org/software/parallel/). If not installed, most scripts fall back to sequential or background (`&`) processing.
@@ -217,6 +256,9 @@ After running the full pipeline, key outputs include:
 | Assembly | `*/final.contigs.fa` | Assembled contigs per sample |
 | Prodigal | `*.protein.faa` | Predicted protein sequences |
 | EggNOG | `*.emapper.annotations` | COG, KEGG, GO functional annotations |
+| ML | `ml_cv_results.csv` | Cross-validation accuracy scores |
+| ML | `ml_feature_importance.png` | Top discriminative sites |
+| ML | `ml_pca_plot.png` | Sample clustering by misincorporation profile |
 
 ---
 
