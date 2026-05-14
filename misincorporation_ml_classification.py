@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Misincorporation Analysis + Machine Learning
-Lanjutan dari analisis misincorporation ratio per timepoint
 """
 
 import pandas as pd
@@ -33,7 +32,7 @@ samples = metadata.index.tolist()
 print(f"✅ Data loaded: {len(samples)} samples")
 
 # =========================
-# 2. Hitung Misincorporation Ratio
+# 2. Calculate Misincorporation Ratio
 # =========================
 misincorp_dict = {}
 for sample in samples:
@@ -101,7 +100,7 @@ anova_df.to_csv("differential_methylation_ANOVA_timepoint.csv", index=False)
 print("✅ ANOVA saved.")
 
 # =========================
-# 5. Heatmap Visualisasi
+# 5. Heatmap Visualization
 # =========================
 ordered_samples = metadata.sort_values("timepoint").index.tolist()
 
